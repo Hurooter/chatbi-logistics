@@ -1,3 +1,13 @@
+-- 本脚本可反复执行：先按外键反序删掉旧表，再重建
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS shipments;
+DROP TABLE IF EXISTS outbound_orders;
+DROP TABLE IF EXISTS inbound_orders;
+DROP TABLE IF EXISTS inventory;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS warehouses;
+SET FOREIGN_KEY_CHECKS = 1;
+
 -- 1. 仓库
 CREATE TABLE warehouses (
     warehouse_id   INT          PRIMARY KEY AUTO_INCREMENT COMMENT '仓库编号',
