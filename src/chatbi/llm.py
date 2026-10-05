@@ -1,8 +1,19 @@
 from openai import OpenAI
+from langchain_openai import ChatOpenAI
 from chatbi.config import DEEPSEEK_API_KEY
 
 client = OpenAI(api_key=DEEPSEEK_API_KEY,base_url="https://api.deepseek.com",timeout=60)
 MODEL="deepseek-flash"
+
+chat_model=ChatOpenAI(
+    model = MODEL,
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com",
+    temperature=0,
+    timeout=60
+)
+
+
 def chat(prompt:str,system:str="") -> str:
     messages=[]
     if system:
