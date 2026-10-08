@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage
 
 from chatbi.agent_graph import graph
 
-config = {"configurable": {"thread_id": "agent-1"}}
+config = {"configurable": {"thread_id": "agent-1"},"recursion_limit":50}
 
 QUESTIONS = [
     "库里都有哪些表？",

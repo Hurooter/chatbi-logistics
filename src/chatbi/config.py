@@ -11,6 +11,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD","")
 DB_HOST = os.getenv("DB_HOST","127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT","3306"))
 DB_NAME = os.getenv("DB_NAME","chatbi_logistics")
+DB_CONNECT_TIMEOUT = 5
+DB_READ_TIMEOUT = 10
 
 def db_config() -> dict:
     return{
@@ -19,5 +21,8 @@ def db_config() -> dict:
         "user": DB_USER,
         "password": DB_PASSWORD,
         "database": DB_NAME,
-        "charset": "utf8mb4"
+        "charset": "utf8mb4",
+        "connect_timeout": DB_CONNECT_TIMEOUT,
+        "read_timeout": DB_READ_TIMEOUT
     }
+

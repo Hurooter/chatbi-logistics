@@ -26,7 +26,7 @@
 
 ## 技术栈
 
-Python · LangGraph · LangChain · DeepSeek API · MySQL · uv
+Python · LangGraph · LangChain · DeepSeek API · MySQL · MCP · uv
 
 ## 核心设计
 
@@ -62,6 +62,30 @@ SQL 执行失败时，条件边把**报错信息**路由回修复节点，由模
 
 基于 LangGraph checkpoint + `thread_id` 持久化会话状态，支持依赖上文的追问。
 
+### 5. MCP 对照版
+
+同一套数据库工具，另做了一条 **MCP（Model Context Protocol）** 路径，与「直接注册成 LangGraph 工具」对照：
+
+| | 直接注册（`agent_graph.py`） | MCP 版（`try_agent_mcp.py`） |
+|---|---|---|
+| 工具住哪 | 同一个进程 | 独立子进程 |
+| 怎么调用 | 普通函数调用 | stdio 协议 |
+| 同步/异步 | 同步 | 异步 |
+| 复用范围 | 仅本项目 | 任何 MCP 客户端 |
+
+- `src/chatbi/mcp_server.py` —— 用 `MCPServer` 把三个工具暴露成一个独立进程
+- `src/chatbi/mcp_tools.py` —— 客户端侧：起子进程、拉工具清单、把 MCP 的 `input_schema` 翻译成 LangChain 的 `args_schema`（官方适配器 `langchain-mcp-adapters` 目前仍基于 mcp 1.x API，与本机 mcp 2.x 不兼容，故手写这一层）
+- `scripts/try_agent_mcp.py` —— 异步版 Agent 图，工具在运行时从 MCP 拉取
+
+价值：**进程隔离**（server 崩了不拖垮主程序）、**跨语言**、一份 server 可同时供多个客户端使用。
+
+### 6. 安全防护
+
+- **SQL 白名单**：不靠关键词黑名单（会误杀 `WHERE product_name='drop table'`、又会漏杀 `SELECT ... INTO OUTFILE`），改用 `sqlglot` 把 SQL 解析成语法树——**只放行根节点为 `SELECT` 的单条语句**；解析失败一律拒绝（fail-closed）
+- **查询超时**：连接设 `read_timeout`，`SELECT SLEEP(300)` 这类慢查询 10 秒内被掐断，不会拖死服务
+- **结果脱敏**：在工具层对敏感列（`manager` / `customer`）打码，结果流向模型 / 日志 / 前端之前先过滤
+- **死循环防护**：Agent 图三层——步数上限（`MAX_STEPS`，数已执行的工具轮数）+ 软着陆（超限转「收口节点」，缴械后直接回答）+ `recursion_limit` 框架保险丝
+
 ## 项目结构
 
 ```
@@ -71,6 +95,7 @@ chatbi/
 │   ├── gen_data.py            # 造数脚本（近 7 万条模拟数据）
 │   ├── show_schema.py         # 打印库表结构
 │   ├── try_agent.py           # Agent 版试跑入口
+│   ├── try_agent_mcp.py       # MCP 版试跑入口（异步）
 │   └── try_multi_turn.py      # 多轮对话验证
 └── src/chatbi/
     ├── config.py              # 配置集中管理（.env）
@@ -78,6 +103,8 @@ chatbi/
     ├── llm.py                 # 模型客户端
     ├── agent_graph.py         # ★ Agent 图（模型自主选工具）
     ├── graph.py               # 早期流水线图（保留对照）
+    ├── mcp_server.py          # MCP server：把工具暴露成独立进程
+    ├── mcp_tools.py           # MCP client：拉工具并转成 LangChain 工具
     ├── nodes/                 # SQL 生成 / 修复 / 结果解读
     └── tools/                 # 工具三件套及其 LangChain 封装
 ```
@@ -116,7 +143,8 @@ uv run python scripts/gen_data.py
 ### 4. 跑起来
 
 ```bash
-uv run python scripts/try_agent.py
+uv run python scripts/try_agent.py       # Agent 版（工具在同一进程）
+uv run python scripts/try_agent_mcp.py   # MCP 版（工具在独立进程）
 ```
 
 ## 开发进度
@@ -125,8 +153,8 @@ uv run python scripts/try_agent.py
 - [x] 工具三件套（查表结构 / 执行只读 SQL / 代码算数）
 - [x] LangGraph 图编排 + SQL 错误自纠循环
 - [x] Agent 自主选择工具 + 多轮对话
-- [ ] MCP 对照版
-- [ ] 安全防护强化（SQL 白名单 / 鉴权 / 限流 / 脱敏）
-- [ ] FastAPI + SSE 接口与前端页面
+- [x] MCP 对照版
+- [x] 安全防护：SQL 真解析白名单 / 查询超时 / 结果脱敏 / Agent 死循环防护
+- [ ] FastAPI + SSE 接口与前端页面（含鉴权、限流）
 - [ ] 20 题评估集与压测报告
 - [ ] Docker 打包
