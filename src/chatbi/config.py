@@ -13,6 +13,8 @@ DB_PORT = int(os.getenv("DB_PORT","3306"))
 DB_NAME = os.getenv("DB_NAME","chatbi_logistics")
 DB_CONNECT_TIMEOUT = 5
 DB_READ_TIMEOUT = 10
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_EXPIRE_SECONDS = 60 * 60 * 24 * 7
 
 def db_config() -> dict:
     return{
