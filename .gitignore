@@ -9,3 +9,10 @@ __pycache__/
 
 *.log
 
+
+# 前端
+web/node_modules/
+web/dist/
+
+.claude/
+scripts/_persist_state.json

@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.143.0",
     "langchain-openai>=1.6.7",
     "langgraph>=1.2.12",
+    "langgraph-checkpoint-mysql>=3.0.0",
     "mcp>=2.3.0",
     "openai>=3.19.2",
     "pymysql>=1.2.3",
@@ -25,3 +26,12 @@ chatbi = "chatbi:main"
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "eval"]
+testpaths = ["tests"]

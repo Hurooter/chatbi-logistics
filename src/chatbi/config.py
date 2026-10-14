@@ -28,3 +28,6 @@ def db_config() -> dict:
         "read_timeout": DB_READ_TIMEOUT
     }
 
+def db_conn_string() -> str:
+    return f"mysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+

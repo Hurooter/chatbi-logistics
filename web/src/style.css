@@ -1,0 +1,79 @@
+:root {
+  --brand: #4f46e5;
+  --brand-dark: #4338ca;
+  --brand-soft: #eef2ff;
+  --bg: #f6f7fb;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e8eaf0;
+  --danger: #dc2626;
+  --ok: #059669;
+  --radius: 12px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+  --shadow-md: 0 6px 20px rgba(16, 24, 40, .08);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, .12);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { letter-spacing: -.01em; }
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 18px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 500;
+  transition: background .15s, transform .05s, box-shadow .15s;
+}
+button:hover:not(:disabled) { background: var(--brand-dark); box-shadow: var(--shadow-sm); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+button.ghost {
+  background: #fff; color: var(--brand); border: 1px solid #d9dce6;
+}
+button.ghost:hover:not(:disabled) { background: var(--brand-soft); border-color: var(--brand); }
+button.danger { background: #fff; color: var(--danger); border: 1px solid #f2c4c4; }
+button.danger:hover:not(:disabled) { background: #fef2f2; border-color: var(--danger); }
+button.small { padding: 5px 12px; font-size: 13px; border-radius: 8px; }
+
+input, textarea {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid #d9dce6;
+  border-radius: 10px;
+  outline: none;
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  transition: border-color .15s, box-shadow .15s;
+}
+input:focus, textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, .12);
+}
+input:disabled { background: #f3f4f6; color: var(--muted); }
+
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.error { color: var(--danger); font-size: 14px; margin: 0; }
+.muted { color: var(--muted); font-size: 13px; margin: 0; }

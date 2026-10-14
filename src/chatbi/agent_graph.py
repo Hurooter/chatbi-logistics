@@ -1,5 +1,5 @@
 from typing import Annotated, TypedDict
-from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import add_messages
 from chatbi.llm import chat_model
 from chatbi.nodes.sql_generator import SYSTEM_PROMPT
@@ -23,7 +23,9 @@ SYSTEM_PROMPT="""你是物流仓储业务的数据分析助手，回答仓库、
 1. 不确定表名或字段名时，先用 schema_tool 查清楚
 2. 用 sql_tool 把数据查出来
 3. 要算占比、增长率时用 calc_tool，不要自己心算
-4. 最后用自然语言把结论讲给用户，不要罗列原始数据"""
+4. 最后用自然语言把结论讲给用户，不要罗列原始数据
+
+重要：调用工具时，绝对不要输出任何文字说明，直接调用工具即可；只有在给出最终结论时才输出文字。"""
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage],add_messages]
@@ -37,29 +39,43 @@ def force_answer(state:AgentState) -> dict:
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"] + [nudge]
     return {"messages":[chat_model.invoke(messages)]}
 
+def rounds_this_turn(messages:list) -> int:
+    """本轮提问已经执行过的工具轮数：只数最后一条 human 消息之后的 ToolMessage"""
+    n = 0
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        if isinstance(m, ToolMessage):
+            n += 1
+    return n
+
 def should_continue(state:AgentState) -> str:
-    last_message = state["messages"][-1]
-    if not last_message.tool_calls:
+    # 有工具调用就一律先去执行，保证 tool_calls 后面一定跟着对应的工具结果
+    if not state["messages"][-1].tool_calls:
         return END
-    rounds = sum(1 for m in state["messages"] if isinstance(m,ToolMessage))
-    if rounds >= MAX_STEPS:
-        return "force_answer"
     return "tools"
 
-def build_agent_graph():
+def after_tools(state:AgentState) -> str:
+    # 工具执行完再判断是否触顶，避免留下没人回应的 tool_calls
+    if rounds_this_turn(state["messages"]) >= MAX_STEPS:
+        return "force_answer"
+    return "agent"
+
+def build_agent_graph(checkpointer):
     builder = StateGraph(AgentState)
     builder.add_node("agent",agent_node)
     builder.add_node("tools",ToolNode(TOOLS))
     builder.add_node("force_answer",force_answer)
 
     builder.add_edge(START,"agent")
-    builder.add_conditional_edges("agent",should_continue,{"tools":"tools","force_answer":"force_answer",END:END})
-    builder.add_edge("tools","agent")
+    builder.add_conditional_edges("agent",should_continue,{"tools":"tools",END:END})
+    builder.add_conditional_edges("tools",after_tools,{"agent":"agent","force_answer":"force_answer"})
     builder.add_edge("force_answer",END)
 
-    return builder.compile(checkpointer=MemorySaver())
+    return builder.compile(checkpointer=checkpointer)
 
-graph = build_agent_graph()
+graph = build_agent_graph(MemorySaver())
+
 
 
 
