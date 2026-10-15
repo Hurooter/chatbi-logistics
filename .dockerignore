@@ -1,0 +1,11 @@
+.venv/
+.git/
+.idea/
+__pycache__/
+*.pyc
+.env
+web/node_modules/
+web/dist/
+.pytest_cache/
+.claude/
+scripts/_persist_state.json

@@ -26,7 +26,7 @@
 
 ## 技术栈
 
-Python · LangGraph · LangChain · DeepSeek API · MySQL · MCP · uv
+Python · LangGraph · LangChain · DeepSeek API · MySQL · FastAPI · Vue 3 · MCP · Docker · uv
 
 ## 核心设计
 
@@ -90,19 +90,32 @@ SQL 执行失败时，条件边把**报错信息**路由回修复节点，由模
 
 ```
 chatbi/
-├── sql/01_schema.sql          # 建表脚本（含反序 DROP，可重复执行）
+├── Dockerfile                 # 后端镜像（python:3.14-slim + pip 装依赖）
+├── docker-compose.yml         # 四容器编排：db / seed / api / web
+├── requirements.txt           # 由 uv.lock 导出的依赖清单（构建镜像用）
+├── sql/                       # 01_schema（6 张业务表）/ 02_users / 03_conversations
+├── eval/
+│   ├── questions.py           # 20 题评估集（题目 + 标准 SQL）
+│   └── run_eval.py            # 判分脚本（严格 / 宽松 / 结论正确 三口径）
+├── tests/                     # pytest 单测（6 文件 33 用例）
 ├── scripts/
 │   ├── gen_data.py            # 造数脚本（近 7 万条模拟数据）
-│   ├── show_schema.py         # 打印库表结构
-│   ├── try_agent.py           # Agent 版试跑入口
-│   ├── try_agent_mcp.py       # MCP 版试跑入口（异步）
-│   └── try_multi_turn.py      # 多轮对话验证
+│   ├── seed.py                # 容器灌数入口（空库才灌，已有数据跳过）
+│   ├── bench.py               # 压测脚本（并发梯度扫描）
+│   └── try_*.py               # 各阶段试跑脚本
+├── web/                       # Vue 3 + Vite 前端
+│   ├── Dockerfile             # 多阶段构建：Node 编译 → nginx 托管
+│   ├── nginx.conf             # 静态托管 + /api 反代（SSE 关闭缓冲）
+│   └── src/                   # 登录 / 首页 / 助手 / 数据管理 / 仓库统计
 └── src/chatbi/
     ├── config.py              # 配置集中管理（.env）
     ├── db.py                  # MySQL 连接与查询
-    ├── llm.py                 # 模型客户端
+    ├── api.py                 # ★ FastAPI 应用入口（路由 + SSE 流式）
+    ├── auth.py                # 密码哈希（PBKDF2）+ JWT
+    ├── deps.py                # 依赖注入：当前用户 + 限流
+    ├── admin.py               # 数据管理 CRUD 接口
+    ├── stats.py               # 仓库统计接口
     ├── agent_graph.py         # ★ Agent 图（模型自主选工具）
-    ├── graph.py               # 早期流水线图（保留对照）
     ├── mcp_server.py          # MCP server：把工具暴露成独立进程
     ├── mcp_tools.py           # MCP client：拉工具并转成 LangChain 工具
     ├── nodes/                 # SQL 生成 / 修复 / 结果解读
@@ -111,16 +124,48 @@ chatbi/
 
 ## 快速开始
 
-**前置**：本地 MySQL、Python 3.14、[uv](https://docs.astral.sh/uv/)、一个 DeepSeek API Key。
+### 方式一：Docker 一键运行（推荐）
 
-### 1. 建库建表
+**前置**：[Docker Desktop](https://www.docker.com/products/docker-desktop/)、一个 DeepSeek API Key。
+
+```bash
+cp .env.example .env         # 填入 DEEPSEEK_API_KEY 和 DB_PASSWORD
+docker compose up -d --build
+```
+
+打开 **http://localhost:8080** 即可使用。
+
+首次启动自动完成：建库建表 → 灌入约 7 万条模拟数据 → 启动后端 → 启动前端。
+
+| 容器 | 作用 | 端口 |
+|---|---|---|
+| `db` | MySQL 8.0，首次启动自动执行 `sql/*.sql` 建表 | 3307 |
+| `seed` | 灌数据，**跑完即退出**；库里已有数据时自动跳过 | — |
+| `api` | FastAPI 后端（等 `seed` 灌完才启动） | 8000 |
+| `web` | nginx：托管前端静态文件 + 反代 `/api` 到后端 | **8080** |
+
+```bash
+docker compose down          # 停止（数据保留在数据卷里）
+docker compose down -v       # 停止并删除数据卷（下次启动会重新灌数）
+docker compose logs -f api   # 跟踪后端日志
+```
+
+接口文档（Swagger）：http://localhost:8000/docs
+
+### 方式二：本机开发环境
+
+**前置**：本地 MySQL、Python 3.14、[uv](https://docs.astral.sh/uv/)、Node 20+、一个 DeepSeek API Key。
+
+**1. 建库建表**
 
 ```bash
 mysql -uroot -p -e "CREATE DATABASE chatbi_logistics DEFAULT CHARACTER SET utf8mb4;"
 mysql -uroot -p --default-character-set=utf8mb4 chatbi_logistics < sql/01_schema.sql
+mysql -uroot -p --default-character-set=utf8mb4 chatbi_logistics < sql/02_users.sql
+mysql -uroot -p --default-character-set=utf8mb4 chatbi_logistics < sql/03_conversations.sql
 ```
 
-### 2. 配置环境变量
+**2. 配置环境变量**
 
 复制 `.env.example` 为 `.env`，填入自己的值：
 
@@ -131,16 +176,24 @@ DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=你的密码
 DB_NAME=chatbi_logistics
+JWT_SECRET=随机字符串
 ```
 
-### 3. 装依赖 + 灌数据
+**3. 装依赖 + 灌数据**
 
 ```bash
 uv sync
 uv run python scripts/gen_data.py
 ```
 
-### 4. 跑起来
+**4. 启动 Web 应用**
+
+```bash
+uv run uvicorn chatbi.api:app --reload --port 8000   # 后端
+cd web && npm install && npm run dev                 # 前端 → http://localhost:5173
+```
+
+**5. 命令行试跑（可选）**
 
 ```bash
 uv run python scripts/try_agent.py       # Agent 版（工具在同一进程）
@@ -155,6 +208,9 @@ uv run python scripts/try_agent_mcp.py   # MCP 版（工具在独立进程）
 - [x] Agent 自主选择工具 + 多轮对话
 - [x] MCP 对照版
 - [x] 安全防护：SQL 真解析白名单 / 查询超时 / 结果脱敏 / Agent 死循环防护
-- [ ] FastAPI + SSE 接口与前端页面（含鉴权、限流）
-- [ ] 20 题评估集与压测报告
-- [ ] Docker 打包
+- [x] 用户系统：注册 / 登录（JWT）/ 改密码，会话按用户隔离
+- [x] Web 前端：登录 / 首页 / 助手（流式 + 可折叠 SQL）/ 数据管理 / 仓库统计
+- [x] FastAPI + SSE 接口（JWT 鉴权 + 按用户限流）
+- [x] 20 题评估集（结论答对 19/20）与压测报告（并发 1→8，QPS 0.2→1.2）
+- [x] pytest 单元测试（6 文件 33 用例）
+- [x] Docker 打包（四容器一键启动）
