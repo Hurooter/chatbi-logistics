@@ -1,0 +1,3 @@
+# 统一换行符为 LF：Dockerfile / nginx.conf 等文件要进 Linux 容器，
+# Windows 换行符会让 RUN 指令尾部多出多余字符
+* text=auto eol=lf
