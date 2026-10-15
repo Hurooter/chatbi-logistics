@@ -28,6 +28,54 @@
 
 Python · LangGraph · LangChain · DeepSeek API · MySQL · FastAPI · Vue 3 · MCP · Docker · uv
 
+## 系统架构
+
+```mermaid
+flowchart TB
+    B["浏览器 — Vue 3 单页应用"]
+
+    subgraph DC["Docker Compose 四容器"]
+        N["nginx<br/>静态托管 + /api 反代"]
+        F["FastAPI<br/>JWT 鉴权 · 限流"]
+        G["LangGraph Agent<br/>模型自主选工具"]
+        T["工具三件套<br/>schema / sql / calc"]
+        M[("MySQL 8.0")]
+    end
+
+    B -->|":8080"| N
+    N -->|"/api/*"| F
+    F -->|"SSE 流式 token"| N
+    F --> G
+    G --> T
+    T --> M
+    F -->|"用户 · 会话 · 管理 CRUD"| M
+```
+
+### Agent 图的执行流程
+
+```mermaid
+flowchart TD
+    START(("START")) --> agent["agent 节点<br/>模型决定调不调工具"]
+    agent -->|"有 tool_calls"| tools["tools 节点<br/>执行 schema / sql / calc"]
+    agent -->|"无 tool_calls"| E(("END"))
+    tools --> cap{"本轮已执行<br/>≥ MAX_STEPS ?"}
+    cap -->|"否，回炉"| agent
+    cap -->|"是，收口"| force["force_answer 节点<br/>缴械后直接作答"]
+    force --> E
+```
+
+### 两条互不打通的数据通道
+
+```mermaid
+flowchart LR
+    subgraph RO["只读通道 — 助手页"]
+        A1["自然语言提问"] --> A2["模型生成 SQL"] --> A3["sqlglot 白名单<br/>只放行单条 SELECT"] --> A4[("MySQL")]
+    end
+    subgraph RW["可写通道 — 数据管理页"]
+        B1["表单填写"] --> B2["参数化 SQL 接口<br/>不经过模型"] --> B4[("MySQL")]
+    end
+```
+
 ## 核心设计
 
 ### 1. 工具三件套
@@ -85,6 +133,51 @@ SQL 执行失败时，条件边把**报错信息**路由回修复节点，由模
 - **查询超时**：连接设 `read_timeout`，`SELECT SLEEP(300)` 这类慢查询 10 秒内被掐断，不会拖死服务
 - **结果脱敏**：在工具层对敏感列（`manager` / `customer`）打码，结果流向模型 / 日志 / 前端之前先过滤
 - **死循环防护**：Agent 图三层——步数上限（`MAX_STEPS`，数已执行的工具轮数）+ 软着陆（超限转「收口节点」，缴械后直接回答）+ `recursion_limit` 框架保险丝
+
+### 7. 用户系统与会话隔离
+
+- 注册即写入 `users` 表，密码用 **PBKDF2-HMAC-SHA256 + 随机盐**存储；验证走 `hmac.compare_digest` 常数时间比较，防时序攻击
+- 登录签发 **JWT**（HS256，7 天过期），`get_current_user` 依赖从请求头解出 `user_id`
+- **会话按用户隔离**：`conversations` 表记「谁的 / 标题 / 时间」，LangGraph 的状态快照交给框架的 MySQL checkpointer，两者用 `thread_id` 挂钩；越权访问返回 403
+- **限流**：按 `user_id` 的滑动窗口（60 秒 10 次），超限 429
+
+### 8. 流式输出
+
+- 后端用同步 `graph.stream(stream_mode="messages")` 逐 token 产出，按 `metadata["langgraph_node"]` **只放行最终回答节点**（过滤掉工具节点的原始产物，否则表结构和查询结果会被当正文吐出来）
+- SSE 协议分三类事件：`token`（正文）、`status`（"正在查询数据…"阶段提示）、`sqls`（本轮实际执行的 SQL，供前端折叠展示）
+- 前端手写 SSE 解析（`fetch` + `ReadableStream`——`EventSource` 只支持 GET，而我们是 POST），配合 `markdown-it` 渲染表格与加粗
+- ⚠️ **nginx 反代必须 `proxy_buffering off`**，否则 token 会被攒着不吐、流式退化成一次性返回
+
+### 9. 评估与压测
+
+**20 题业务评估集**（`eval/questions.py`），每题配标准 SQL，跑模型实际作答后按三个口径判分：
+
+| 口径 | 含义 | 结果 |
+|---|---|---|
+| 严格 | 结果集与标准答案完全一致（忽略行序） | 9/20 |
+| 宽松 | 允许模型多返回列（做列投影比较） | 15/20 |
+| **结论正确** | 标准答案的关键数值出现在最终回答里（带容差、识别「万 / 亿」） | **19/20** |
+
+> 判分口径值得说明：这是**多轮 Agent**，"它执行的 SQL" ≠ "它给出的答案"。模型常先跑一条正确查询再补一条探量查询，或返回全量明细后自己从里面挑出答案。只比对「最后一条 SQL 的结果集」会严重低估——初版口径跑出来只有 35%。
+
+唯一算错的一题是题目本身有歧义（「签收超过 5 天」既可理解为运输时长、也可理解为距今）。
+
+**压测**（`scripts/bench.py`，16 题 × 并发 1/2/4/8）：
+
+| 并发 | 平均延迟 | P95 | QPS | 失败 |
+|---|---|---|---|---|
+| 1 | 4.72s | 6.30s | 0.21 | 0 |
+| 2 | 4.97s | 6.76s | 0.39 | 0 |
+| 4 | 4.75s | 7.18s | 0.82 | 0 |
+| 8 | 4.85s | 6.53s | **1.23** | 0 |
+
+结论：**延迟不随并发恶化**——瓶颈在模型 API，不在服务 / 框架 / 数据库；QPS 随并发近线性增长，并发 8 仍未饱和。单次问答约消耗 5.5–6.1k token。
+
+### 10. 工程化
+
+- **pytest 单测**：6 文件 33 用例，覆盖 SQL 白名单、密码哈希与 JWT、Agent 轮次（给修过的 bug 加回归）、限流、判分逻辑——全部不依赖大模型与网络
+- **Docker 一键运行**：四容器编排（`db` / `seed` / `api` / `web`），首次启动自动建表灌数；前端多阶段构建，产物镜像不含源码
+- **密钥隔离**：所有密钥只存 `.env`（不进 git、不进镜像），容器里靠环境变量注入
 
 ## 项目结构
 
